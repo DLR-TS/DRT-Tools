@@ -1,6 +1,10 @@
 # Postprocessing
 
-This is a script for post processing of SUMO output files.
+This is a script for post processing of SUMO output files like tripinfo and dispatchinfo files.
+
+It expects a SUMO simulation with taxi devices. Unfinished tips are filtered.
+After processing the output files, a simple excel file is created with a selection of KPI.
+
 
 ## Installation
 
