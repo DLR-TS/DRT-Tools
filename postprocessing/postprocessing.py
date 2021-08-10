@@ -78,7 +78,7 @@ def process_dispatchinfo(file):
     return dispatch_dict
 
 
-def process_tripinfo(tripinfo_path):
+def process_tripinfo(tripinfo_path, vtype='drt'):
     """
     Process data of tripinfo output file.
 
@@ -86,6 +86,9 @@ def process_tripinfo(tripinfo_path):
     ----------
     tripinfo_path : str
         Path of tripinfo file.
+    vtype: str, optional
+        Only tripinfos with this vehicle type are considered.
+        The default is 'drt'.
 
     Raises
     ------
@@ -101,7 +104,9 @@ def process_tripinfo(tripinfo_path):
 
     root_tripinfo = get_root(tripinfo_path)
     list_personinfo = root_tripinfo.findall("personinfo")
-    list_tripinfo = root_tripinfo.findall("tripinfo")
+    # filter for vehicle type
+    list_tripinfo = root_tripinfo.findall(
+        "tripinfo[@vType='{0}']".format(vtype))
 
     timeloss_ride = []
     duration_ride = []
@@ -192,7 +197,8 @@ def process_tripinfo(tripinfo_path):
         "duration_trip": np.array(duration_trip, dtype=float),
         "stoptime_trip": np.array(stoptime_trip, dtype=float),
         "length_trip": np.array(length_trip, dtype=float),
-        "occupied_distance_trip": np.array(occupied_distance_trip, dtype=float),
+        "occupied_distance_trip": np.array(
+            occupied_distance_trip, dtype=float),
         "occupied_time_trip": np.array(occupied_time_trip, dtype=float),
         "passengers_per_time_occupied": passengers_per_time_occupied,
         "passengers_per_time_driving": passengers_per_time_driving
@@ -243,13 +249,16 @@ def calculate_stats(tripinfo_dict, dispatch_dict):
 
     distance_vehicle = tripinfo_dict["length_trip"].sum()/1000
     distance_vehicle_mean = tripinfo_dict["length_trip"].mean()/1000
-    distance_vehicle_occupied = tripinfo_dict["occupied_distance_trip"].sum()/1000
-    distance_vehicle_occupied_mean = tripinfo_dict["occupied_distance_trip"].mean()/1000
+    distance_vehicle_occupied = tripinfo_dict[
+        "occupied_distance_trip"].sum()/1000
+    distance_vehicle_occupied_mean = tripinfo_dict[
+        "occupied_distance_trip"].mean()/1000
     distance_vehicle_empty = distance_vehicle - distance_vehicle_occupied
 
     duration_vehicle = tripinfo_dict["duration_trip"].sum()/60
     duration_vehicle_occupied = tripinfo_dict["occupied_time_trip"].sum()/60
-    duration_vehicle_occupied_mean = tripinfo_dict["occupied_time_trip"].mean()/60
+    duration_vehicle_occupied_mean = tripinfo_dict[
+        "occupied_time_trip"].mean()/60
     duration_vehicle_stop = tripinfo_dict["stoptime_trip"].sum()/60
     duration_vehicle_stop_mean = tripinfo_dict["stoptime_trip"].mean()/60
     duration_vehicle_driving = duration_vehicle - duration_vehicle_stop
@@ -328,7 +337,9 @@ def dict2xls(output_file, output_dict):
 @click.option('-t', '--tripinfo', default="tripinfo.output.xml", help='Tripinfo xml file.')
 @click.option('-d', '--dispatchinfo', help='Dispatchinfo xml file.')
 @click.option('-o', '--output', default="output.xls", help='Output Excel file.')
-def main(tripinfo, dispatchinfo, output):
+@click.option('-d', '--dispatchinfo', help='Dispatchinfo xml file.')
+@click.option('-v', '--vtype', default="drt", help='Vehicle type to consider.')
+def main(tripinfo, dispatchinfo, output, vtype):
     """
     Command line function to run post-processing and write output file.
 
@@ -347,7 +358,7 @@ def main(tripinfo, dispatchinfo, output):
 
     """
     # Process output files and write stats to csv file.
-    tripinfo_dict = process_tripinfo(tripinfo)
+    tripinfo_dict = process_tripinfo(tripinfo, vtype)
     if dispatchinfo:
         dispatch_dict = process_dispatchinfo(dispatchinfo)
     else:
