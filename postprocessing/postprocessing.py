@@ -9,6 +9,7 @@ Created on Tue Dec 08 11:04:00 2020
 import click
 import numpy as np
 import pathlib
+
 try:
     from lxml import etree
 except ImportError:
@@ -19,6 +20,7 @@ except ImportError:
             import xml.etree.ElementTree as etree
         except ImportError:
             print("Failed to import ElementTree from any known place")
+
 import xlwt
 
 
@@ -27,7 +29,7 @@ def get_root(path):
     try:
         tree = etree.parse(path.as_posix())
     except:
-        raise Exception("Error loading file {}.".format(path.as_posix()))  
+        raise Exception("Error loading file {}.".format(path.as_posix()))
     root = tree.getroot()
     return root
 
@@ -52,7 +54,7 @@ def process_dispatchinfo(file):
         Relevant output variables.
 
     """
-    
+
     root_dispatchinfo = get_root(file)
     n_persons = 0
     timeloss_rel = []
@@ -76,7 +78,7 @@ def process_dispatchinfo(file):
     return dispatch_dict
 
 
-def process_tripinfo(tripinfo_path):
+def process_tripinfo(tripinfo_path, vtype='drt'):
     """
     Process data of tripinfo output file.
 
@@ -84,6 +86,9 @@ def process_tripinfo(tripinfo_path):
     ----------
     tripinfo_path : str
         Path of tripinfo file.
+    vtype: str, optional
+        Only tripinfos with this vehicle type are considered.
+        The default is 'drt'.
 
     Raises
     ------
@@ -96,11 +101,13 @@ def process_tripinfo(tripinfo_path):
          Relevant output variables.
 
     """
-    
+
     root_tripinfo = get_root(tripinfo_path)
     list_personinfo = root_tripinfo.findall("personinfo")
-    list_tripinfo = root_tripinfo.findall("tripinfo")
-    
+    # filter for vehicle type
+    list_tripinfo = root_tripinfo.findall(
+        "tripinfo[@vType='{0}']".format(vtype))
+
     timeloss_ride = []
     duration_ride = []
     waiting_ride = []
@@ -114,19 +121,19 @@ def process_tripinfo(tripinfo_path):
     occupied_time_trip = []
     # number of raw personinfo entries
     n_personinfo_raw = len(list_personinfo)
-    
-    n_filtered = 0 # filtered personinfo (faulty entries)
-    n_walking_only = 0 # personinfo with walk but without ride
-    
+
+    n_filtered = 0  # filtered personinfo (faulty entries)
+    n_walking_only = 0  # personinfo with walk but without ride
+
     for personinfo in list_personinfo:
         completed = True
-        
+
         list_ride = personinfo.findall("ride")
         list_walk = personinfo.findall("walk")
-        
+
         if list_walk and not list_ride:
             n_walking_only += 1
-        
+
         for ride in list_ride:
             # skip personinfo with depart < 0
             if float(ride.get("depart")) < 0:
@@ -153,7 +160,7 @@ def process_tripinfo(tripinfo_path):
         for walk in list_walk:
             duration_walk.append(walk.get("duration"))
             length_walk.append(walk.get("routeLength"))
-    
+
     for tripinfo in list_tripinfo:
         duration_trip.append(tripinfo.get("duration"))
         stoptime_trip.append(tripinfo.get("stopTime"))
@@ -161,19 +168,18 @@ def process_tripinfo(tripinfo_path):
         for trip in tripinfo:
             occupied_distance_trip.append(trip.get("occupiedDistance"))
             occupied_time_trip.append(trip.get("occupiedTime"))
-    
+
     rate_filtered = n_filtered/n_personinfo_raw
-    
+
     duration_ride_sum = np.array(duration_ride, dtype=float).sum()
     time_occupied_sum = np.array(occupied_time_trip, dtype=float).sum()
     duration_trip_sum = np.array(duration_trip, dtype=float).sum()
     time_stop_sum = np.array(stoptime_trip, dtype=float).sum()
     time_driving_sum = duration_trip_sum - time_stop_sum
-    
+
     passengers_per_time_occupied = duration_ride_sum / time_occupied_sum
     passengers_per_time_driving = duration_ride_sum / time_driving_sum
-    
-    
+
     tripinfo_dict = {
         "n_personinfo_raw": n_personinfo_raw,
         "n_filtered": n_filtered,
@@ -191,17 +197,18 @@ def process_tripinfo(tripinfo_path):
         "duration_trip": np.array(duration_trip, dtype=float),
         "stoptime_trip": np.array(stoptime_trip, dtype=float),
         "length_trip": np.array(length_trip, dtype=float),
-        "occupied_distance_trip": np.array(occupied_distance_trip, dtype=float),
+        "occupied_distance_trip": np.array(
+            occupied_distance_trip, dtype=float),
         "occupied_time_trip": np.array(occupied_time_trip, dtype=float),
         "passengers_per_time_occupied": passengers_per_time_occupied,
         "passengers_per_time_driving": passengers_per_time_driving
-        }
-    
+    }
+
     return tripinfo_dict
 
 
 def calculate_stats(tripinfo_dict, dispatch_dict):
-    
+
     # Rides
     # counts personinfo with ride and arrival > 0 only
     n_rides = tripinfo_dict["n_rides"]
@@ -217,42 +224,45 @@ def calculate_stats(tripinfo_dict, dispatch_dict):
         rate_pooling = -1
         n_trips = -1
         requests_per_trip = -1
-        
+
     waiting_ride_mean = tripinfo_dict["waiting_ride"].mean()/60
     waiting_ride_std = tripinfo_dict["waiting_ride"].std()/60
     distance_ride = tripinfo_dict["length_ride"].sum()/1000
     distance_ride_mean = tripinfo_dict["length_ride"].mean()/1000
     duration_ride_mean = tripinfo_dict["duration_ride"].mean()/60
-    
+
     if dispatch_dict:
         timeloss_rel_mean = dispatch_dict["timeloss_rel"].mean()
         timeloss_rel_max = dispatch_dict["timeloss_rel"].max()
     else:
         timeloss_rel_mean = -1
         timeloss_rel_max = -1
-        
+
     # Walks
     n_walks = tripinfo_dict["n_walks"]
     distance_walk_mean = tripinfo_dict["length_walk"].mean()/1000
     duration_walk_mean = tripinfo_dict["duration_walk"].mean()/60
     duration_trip_mean = duration_ride_mean + 2 * duration_walk_mean
-    
+
     # Vehicle trips
     n_vehicles = tripinfo_dict["n_vehicles"]
-    
+
     distance_vehicle = tripinfo_dict["length_trip"].sum()/1000
     distance_vehicle_mean = tripinfo_dict["length_trip"].mean()/1000
-    distance_vehicle_occupied = tripinfo_dict["occupied_distance_trip"].sum()/1000
-    distance_vehicle_occupied_mean= tripinfo_dict["occupied_distance_trip"].mean()/1000
-    distance_vehicle_empty =  distance_vehicle - distance_vehicle_occupied
-    
+    distance_vehicle_occupied = tripinfo_dict[
+        "occupied_distance_trip"].sum()/1000
+    distance_vehicle_occupied_mean = tripinfo_dict[
+        "occupied_distance_trip"].mean()/1000
+    distance_vehicle_empty = distance_vehicle - distance_vehicle_occupied
+
     duration_vehicle = tripinfo_dict["duration_trip"].sum()/60
     duration_vehicle_occupied = tripinfo_dict["occupied_time_trip"].sum()/60
-    duration_vehicle_occupied_mean = tripinfo_dict["occupied_time_trip"].mean()/60
+    duration_vehicle_occupied_mean = tripinfo_dict[
+        "occupied_time_trip"].mean()/60
     duration_vehicle_stop = tripinfo_dict["stoptime_trip"].sum()/60
     duration_vehicle_stop_mean = tripinfo_dict["stoptime_trip"].mean()/60
     duration_vehicle_driving = duration_vehicle - duration_vehicle_stop
-    
+
     output_dict = {
         "n_personinfo_raw": tripinfo_dict["n_personinfo_raw"],
         "n_filtered": tripinfo_dict["n_filtered"],
@@ -289,8 +299,8 @@ def calculate_stats(tripinfo_dict, dispatch_dict):
             "passengers_per_time_occupied"],
         "passengers_per_time_driving": tripinfo_dict[
             "passengers_per_time_driving"]
-        }
-    
+    }
+
     return output_dict
 
 
@@ -310,16 +320,16 @@ def dict2xls(output_file, output_dict):
     None.
 
     """
-    
+
     workbook = xlwt.Workbook()
     worksheet = workbook.add_sheet("output")
-    
+
     row = 0
     for key, value in output_dict.items():
         worksheet.write(row, 0, key)
         worksheet.write(row, 1, value)
         row += 1
-        
+
     workbook.save(output_file)
 
 
@@ -327,7 +337,9 @@ def dict2xls(output_file, output_dict):
 @click.option('-t', '--tripinfo', default="tripinfo.output.xml", help='Tripinfo xml file.')
 @click.option('-d', '--dispatchinfo', help='Dispatchinfo xml file.')
 @click.option('-o', '--output', default="output.xls", help='Output Excel file.')
-def main(tripinfo, dispatchinfo, output):
+@click.option('-d', '--dispatchinfo', help='Dispatchinfo xml file.')
+@click.option('-v', '--vtype', default="drt", help='Vehicle type to consider.')
+def main(tripinfo, dispatchinfo, output, vtype):
     """
     Command line function to run post-processing and write output file.
 
@@ -346,14 +358,15 @@ def main(tripinfo, dispatchinfo, output):
 
     """
     # Process output files and write stats to csv file.
-    tripinfo_dict = process_tripinfo(tripinfo)
+    tripinfo_dict = process_tripinfo(tripinfo, vtype)
     if dispatchinfo:
         dispatch_dict = process_dispatchinfo(dispatchinfo)
     else:
         dispatch_dict = None
     output_dict = calculate_stats(tripinfo_dict, dispatch_dict)
-    outp.dict2xls(output, output_dict)
-    
+    dict2xls(output, output_dict)
+
+
 if __name__ == '__main__':
-    
+
     main()
