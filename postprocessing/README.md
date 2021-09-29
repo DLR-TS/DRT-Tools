@@ -29,3 +29,10 @@ If you have a dispatchinfo output file, you can include it with:
 For further help on the command line arguments run:
 
     python postprocessing.py --help
+
+
+## Filtering
+
+Vehicle trips are filtered by vehicle type to get the taxi vehicles only. By default, the vehicle type `drt` is used. This can be changed via option `-v VTYPE`.
+
+Person trips can be filtered by time via options `--depart-earliest TIME` and `arrival_latest TIME`.
