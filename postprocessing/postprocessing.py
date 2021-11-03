@@ -25,11 +25,12 @@ except ImportError:
 
 
 def get_root(path):
+    """Get root from XML file in path."""
     path = pathlib.Path(path)
     try:
         tree = etree.parse(path.as_posix())
-    except:
-        raise Exception("Error loading file {}.".format(path.as_posix()))
+    except Exception as error_loading:
+        raise (f"Error loading file {path.as_posix()}.") from error_loading
     root = tree.getroot()
     return root
 
@@ -112,6 +113,12 @@ def process_tripinfo(tripinfo_path, vtype='drt',
     root_tripinfo = get_root(tripinfo_path)
     list_personinfo = root_tripinfo.findall("personinfo")
     list_tripinfo = root_tripinfo.findall(f"tripinfo[@vType='{vtype}']")
+
+    if len(list_tripinfo) == 0:
+        raise Exception(f"There is no tripinfo entry with vType='{vtype}'.")
+
+    if len(list_personinfo) == 0:
+        raise Exception("There is no personinfo entry.")
 
     timeloss_ride = []
     duration_ride = []
@@ -226,7 +233,7 @@ def process_tripinfo(tripinfo_path, vtype='drt',
 
 
 def calculate_stats(tripinfo_dict, dispatch_dict):
-
+    """Calculate statistics for common KPIs."""
     # Rides
     # counts personinfo with ride and arrival > 0 only
     n_rides = tripinfo_dict["n_rides"]
@@ -363,7 +370,7 @@ def dict2xls(output_file, output_dict):
 def main(tripinfo, dispatchinfo, output, vtype, depart_earliest, arrival_latest):
     """
     Command line script for postprocessing of SUMO output files.
-    
+
     Parameters
     ----------
     tripinfo : str or path-like
