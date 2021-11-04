@@ -6,9 +6,11 @@ Created on Tue Dec 08 11:04:00 2020
 @author: ritz_ph
 """
 
+import pathlib
+
 import click
 import numpy as np
-import pathlib
+import xlwt
 
 try:
     from lxml import etree
@@ -21,15 +23,14 @@ except ImportError:
         except ImportError:
             print("Failed to import ElementTree from any known place")
 
-import xlwt
-
 
 def get_root(path):
+    """Get root from XML file in path."""
     path = pathlib.Path(path)
     try:
         tree = etree.parse(path.as_posix())
-    except:
-        raise Exception("Error loading file {}.".format(path.as_posix()))
+    except Exception as error_loading:
+        raise (f"Error loading file {path.as_posix()}.") from error_loading
     root = tree.getroot()
     return root
 
@@ -78,7 +79,8 @@ def process_dispatchinfo(file):
     return dispatch_dict
 
 
-def process_tripinfo(tripinfo_path, vtype='drt'):
+def process_tripinfo(tripinfo_path, vtype='drt',
+                     depart_earliest=-1, arrival_latest=-1):
     """
     Process data of tripinfo output file.
 
@@ -89,6 +91,12 @@ def process_tripinfo(tripinfo_path, vtype='drt'):
     vtype: str, optional
         Only tripinfos with this vehicle type are considered.
         The default is 'drt'.
+    depart_earliest: float, optional
+        Skip personinfo entry which depart earlier than this.
+        The default is -1, which means no filtering.
+    arrival_latest: float, optional
+        Skip personinfo entry which arrive later than this.
+        The default is -1, which means no filtering.
 
     Raises
     ------
@@ -104,9 +112,13 @@ def process_tripinfo(tripinfo_path, vtype='drt'):
 
     root_tripinfo = get_root(tripinfo_path)
     list_personinfo = root_tripinfo.findall("personinfo")
-    # filter for vehicle type
-    list_tripinfo = root_tripinfo.findall(
-        "tripinfo[@vType='{0}']".format(vtype))
+    list_tripinfo = root_tripinfo.findall(f"tripinfo[@vType='{vtype}']")
+
+    if len(list_tripinfo) == 0:
+        raise Exception(f"There is no tripinfo entry with vType='{vtype}'.")
+
+    if len(list_personinfo) == 0:
+        raise Exception("There is no personinfo entry.")
 
     timeloss_ride = []
     duration_ride = []
@@ -119,14 +131,23 @@ def process_tripinfo(tripinfo_path, vtype='drt'):
     length_trip = []
     occupied_distance_trip = []
     occupied_time_trip = []
-    # number of raw personinfo entries
-    n_personinfo_raw = len(list_personinfo)
 
-    n_filtered = 0  # filtered personinfo (faulty entries)
-    n_walking_only = 0  # personinfo with walk but without ride
+    n_personinfo_raw = len(list_personinfo)
+    n_filtered = 0  # filtered personinfo
+    n_walking_only = 0  # personinfo without ride
 
     for personinfo in list_personinfo:
-        completed = True
+
+        # Filter for time window
+        if depart_earliest > 0:
+            if float(personinfo.get('depart')) < depart_earliest:
+                n_filtered += 1
+                continue
+        if arrival_latest > 0:
+            arrivals = [float(entry.get('arrival')) for entry in personinfo]
+            if max(arrivals) > arrival_latest:
+                n_filtered += 1
+                continue
 
         list_ride = personinfo.findall("ride")
         list_walk = personinfo.findall("walk")
@@ -134,29 +155,33 @@ def process_tripinfo(tripinfo_path, vtype='drt'):
         if list_walk and not list_ride:
             n_walking_only += 1
 
+        skip = False
         for ride in list_ride:
             # skip personinfo with depart < 0
             if float(ride.get("depart")) < 0:
-                completed = False
+                skip = True
+                break
             # skip personinfo with arrival < 0
             if float(ride.get("arrival")) < 0:
-                completed = False
+                skip = True
+                break
             # skip personinfo with routeLength < 0
             if float(ride.get("routeLength")) < 0:
-                completed = False
+                skip = True
+                break
             # skip personinfo with vehicle "NULL"
             if ride.get("vehicle") == "NULL":
-                completed = False
-            if not completed:
-                n_filtered += 1
+                skip = True
                 break
             timeloss_ride.append(ride.get("timeLoss"))
             duration_ride.append(ride.get("duration"))
             waiting_ride.append(ride.get("waitingTime"))
             length_ride.append(ride.get("routeLength"))
-        if not completed:
-            # skip this personinfo entry
+
+        if skip:
+            n_filtered += 1
             continue
+
         for walk in list_walk:
             duration_walk.append(walk.get("duration"))
             length_walk.append(walk.get("routeLength"))
@@ -208,7 +233,7 @@ def process_tripinfo(tripinfo_path, vtype='drt'):
 
 
 def calculate_stats(tripinfo_dict, dispatch_dict):
-
+    """Calculate statistics for common KPIs."""
     # Rides
     # counts personinfo with ride and arrival > 0 only
     n_rides = tripinfo_dict["n_rides"]
@@ -337,11 +362,14 @@ def dict2xls(output_file, output_dict):
 @click.option('-t', '--tripinfo', default="tripinfo.output.xml", help='Tripinfo xml file.')
 @click.option('-d', '--dispatchinfo', help='Dispatchinfo xml file.')
 @click.option('-o', '--output', default="output.xls", help='Output Excel file.')
-@click.option('-d', '--dispatchinfo', help='Dispatchinfo xml file.')
 @click.option('-v', '--vtype', default="drt", help='Vehicle type to consider.')
-def main(tripinfo, dispatchinfo, output, vtype):
+@click.option('--depart-earliest', default=-1, type=float,
+              help='Earliest departure to consider.')
+@click.option('--arrival-latest', default=-1, type=float,
+              help='Latest arrival to consider.')
+def main(tripinfo, dispatchinfo, output, vtype, depart_earliest, arrival_latest):
     """
-    Command line function to run post-processing and write output file.
+    Command line script for postprocessing of SUMO output files.
 
     Parameters
     ----------
@@ -351,6 +379,15 @@ def main(tripinfo, dispatchinfo, output, vtype):
         Dispatchinfo xml file.
     output : str
         Output xls file.
+    vtype: str, optional
+        Only tripinfos with this vehicle type are considered.
+        The default is 'drt'.
+    depart_earliest: float, optional
+        Skip personinfo entry which depart earlier than this.
+        The default is -1, which means no filtering.
+    arrival_latest: float, optional
+        Skip personinfo entry which arrive later than this.
+        The default is -1, which means no filtering.
 
     Returns
     -------
@@ -358,7 +395,8 @@ def main(tripinfo, dispatchinfo, output, vtype):
 
     """
     # Process output files and write stats to csv file.
-    tripinfo_dict = process_tripinfo(tripinfo, vtype)
+    tripinfo_dict = process_tripinfo(
+        tripinfo, vtype, depart_earliest, arrival_latest)
     if dispatchinfo:
         dispatch_dict = process_dispatchinfo(dispatchinfo)
     else:
