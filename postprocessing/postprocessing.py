@@ -4,8 +4,11 @@
 Created on Tue Dec 08 11:04:00 2020
 
 @author: ritz_ph
+@author: rumm_jo
 """
 
+import os
+import sys
 import pathlib
 
 import click
@@ -23,6 +26,14 @@ except ImportError:
         except ImportError:
             print("Failed to import ElementTree from any known place")
 
+if 'SUMO_HOME' in os.environ:
+    tools = os.path.join(os.environ['SUMO_HOME'], 'tools')
+    sys.path.append(tools)
+else:
+    sys.exit("please declare environment variable 'SUMO_HOME'")
+# SUMO modules
+import traci  # noqa
+
 
 def get_root(path):
     """Get root from XML file in path."""
@@ -30,7 +41,7 @@ def get_root(path):
     try:
         tree = etree.parse(path.as_posix())
     except Exception as error_loading:
-        raise (f"Error loading file {path.as_posix()}.") from error_loading
+        raise IOError(f"Error loading file {path.as_posix()}.") from error_loading
     root = tree.getroot()
     return root
 
@@ -77,6 +88,47 @@ def process_dispatchinfo(file):
         "timeloss_rel": np.array(timeloss_rel, dtype=float),
         "timeloss_abs": np.array(timeloss_abs, dtype=float)}
     return dispatch_dict
+
+
+def process_direct_routes(file):
+    """
+    Process data of direct routes file.
+
+    Parameters
+    ----------
+    file : str
+        Path of direct route file.
+
+    Raises
+    ------
+    Exception
+        Error loading file.
+
+    Returns
+    -------
+    direct_route_dict : dict
+        Relevant output variables.
+
+    """
+
+    root_direct_route = get_root(file)
+    n_persons = 0
+    travel_time = []
+    route_length = []
+    list_vehicles = root_direct_route.findall("vehicle")  # skip vehicle info (is not needed)
+    list_routes = [veh.find("route") for veh in list_vehicles]
+    n_routes = len(list_routes)
+    if n_routes == 0:
+        # no direct route entries
+        return None
+    for route in list_routes:
+        travel_time.append(route.get("cost"))
+        route_length.append(route.get("routeLength"))
+    direct_route_dict = {
+        "n_routes": n_routes,
+        "travel_time": np.array(travel_time, dtype=float),
+        "route_length": np.array(route_length, dtype=float)}
+    return direct_route_dict
 
 
 def process_tripinfo(tripinfo_path, vtype='drt',
@@ -232,7 +284,7 @@ def process_tripinfo(tripinfo_path, vtype='drt',
     return tripinfo_dict
 
 
-def calculate_stats(tripinfo_dict, dispatch_dict):
+def calculate_stats(tripinfo_dict, dispatch_dict, direct_routes_dict):
     """Calculate statistics for common KPIs."""
     # Rides
     # counts personinfo with ride and arrival > 0 only
@@ -249,6 +301,17 @@ def calculate_stats(tripinfo_dict, dispatch_dict):
         rate_pooling = -1
         n_trips = -1
         requests_per_trip = -1
+
+    if direct_routes_dict:
+        n_direct_routes = direct_routes_dict["n_routes"]
+        direct_travel_time_mean = direct_routes_dict["travel_time"].mean()/60  # in minutes
+        direct_route_length_sum = direct_routes_dict["route_length"].sum()/1000  # in km
+        direct_route_length_mean = direct_routes_dict["route_length"].mean()/1000  # in km
+    else:
+        n_direct_routes = -1
+        direct_travel_time_mean = -1
+        direct_route_length_sum = -1
+        direct_route_length_mean = -1
 
     waiting_ride_mean = tripinfo_dict["waiting_ride"].mean()/60
     waiting_ride_std = tripinfo_dict["waiting_ride"].std()/60
@@ -323,7 +386,12 @@ def calculate_stats(tripinfo_dict, dispatch_dict):
         "passengers_per_time_occupied": tripinfo_dict[
             "passengers_per_time_occupied"],
         "passengers_per_time_driving": tripinfo_dict[
-            "passengers_per_time_driving"]
+            "passengers_per_time_driving"],
+        "n_direct_routes": n_direct_routes,
+        "direct_travel_time_mean": direct_travel_time_mean,
+        "direct_route_length_mean": direct_route_length_mean,
+        "operational_efficiency": distance_ride/distance_vehicle,
+        "system_efficiency": direct_route_length_sum/distance_vehicle
     }
 
     return output_dict
@@ -361,13 +429,14 @@ def dict2xls(output_file, output_dict):
 @click.command()
 @click.option('-t', '--tripinfo', default="tripinfo.output.xml", help='Tripinfo xml file.')
 @click.option('-d', '--dispatchinfo', help='Dispatchinfo xml file.')
+@click.option('-r', '--direct-routes', help='Route file with direct routes of the booked requests.')
 @click.option('-o', '--output', default="output.xls", help='Output Excel file.')
 @click.option('-v', '--vtype', default="drt", help='Vehicle type to consider.')
 @click.option('--depart-earliest', default=-1, type=float,
               help='Earliest departure to consider.')
 @click.option('--arrival-latest', default=-1, type=float,
               help='Latest arrival to consider.')
-def main(tripinfo, dispatchinfo, output, vtype, depart_earliest, arrival_latest):
+def main(tripinfo, dispatchinfo, direct_routes, output, vtype, depart_earliest, arrival_latest):
     """
     Command line script for postprocessing of SUMO output files.
 
@@ -377,6 +446,8 @@ def main(tripinfo, dispatchinfo, output, vtype, depart_earliest, arrival_latest)
         Tripinfo xml file
     dispatchinfo : str or path-like, optional
         Dispatchinfo xml file.
+    direct_routes : str or path-like, optional
+        Route file with direct routes of the booked requests.
     output : str
         Output xls file.
     vtype: str, optional
@@ -401,7 +472,11 @@ def main(tripinfo, dispatchinfo, output, vtype, depart_earliest, arrival_latest)
         dispatch_dict = process_dispatchinfo(dispatchinfo)
     else:
         dispatch_dict = None
-    output_dict = calculate_stats(tripinfo_dict, dispatch_dict)
+    if direct_routes:
+        direct_routes_dict = process_direct_routes(direct_routes)
+    else:
+        direct_routes_dict = None
+    output_dict = calculate_stats(tripinfo_dict, dispatch_dict, direct_routes_dict)
     dict2xls(output, output_dict)
 
 
