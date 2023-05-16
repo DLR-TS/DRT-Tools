@@ -26,6 +26,10 @@ If you have a dispatchinfo output file, you can include it with:
 
     python postprocessing.py -t tripinfo.output.xml -d dispatchinfo.output.xml -o output.xls
 
+If you have a direct route output file, you can include it with:
+
+    python postprocessing.py -t tripinfo.output.xml -r direct_routes.rou.xml -o output.xls
+
 For further help on the command line arguments run:
 
     python postprocessing.py --help
@@ -36,3 +40,10 @@ For further help on the command line arguments run:
 Vehicle trips are filtered by vehicle type to get the taxi vehicles only. By default, the vehicle type `drt` is used. This can be changed via option `-v VTYPE`.
 
 Person trips can be filtered by time via options `--depart-earliest TIME` and `arrival_latest TIME`.
+
+
+## Create Direct Routes
+
+You need to create a vehicle trips file (direct_requests.rou.xml) out of the person trips file, somehow. Then, duarouter can calculate the direct routes:
+
+    duarouter -n net.net.xml --route-files direct_requests.rou.xml -o direct_routes.rou.xml --route-length --write-costs
